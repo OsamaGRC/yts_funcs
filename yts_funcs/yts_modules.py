@@ -1,8 +1,10 @@
 import requests
+import os
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
 import warnings
+from pathlib import Path
 
 # Calculates Antecedent Precipitation Index (API) from daily rainfall data 
 def generate_api(data, date_column:str, k:float):
@@ -166,8 +168,8 @@ import pandas as pd
 
 def tz_shift_resample(
     df,
-    source_tz='UTC',
-    target_tz='Australia/Sydney',
+    source_tz=None,
+    target_tz=None,
     shift_hours=-9,
     resample_freq='D',
     label='right',
@@ -194,21 +196,58 @@ def tz_shift_resample(
         raise TypeError("DataFrame index must be a datetime type.")
 
     # Localize if naive
-    if df.index.tz is None:
-        df.index = df.index.tz_localize(source_tz)
-    else:
-        df.index = df.index.tz_convert(source_tz)
+    if source_tz:
+        if df.index.tz is None:
+            df.index = df.index.tz_localize(source_tz)
+        else:
+            df.index = df.index.tz_convert(source_tz)
+    if target_tz:
+        # Convert to target timezone
+        df.index = df.index.tz_convert(target_tz)
 
-    # Convert to target timezone
-    df.index = df.index.tz_convert(target_tz)
-
-    # Shift index
-    df.index = df.index + pd.Timedelta(hours=shift_hours)
+        # Shift index
+        df.index = df.index + pd.Timedelta(hours=shift_hours)
 
     # Resample
     df = df.resample(resample_freq, label=label, closed=closed).sum()
 
     # Shift index back
     df.index = df.index - pd.Timedelta(hours=shift_hours)
+
+    return df
+
+def read_pluvial_BoM_csv(filepath, filter_out=None, only_rf=True):
+    # Extract the second part of the file name (after the first underscore)
+    col_name = "G0"+Path(filepath).stem.split('.')[-1]
+
+    # Read the CSV
+    df = pd.read_csv(filepath, skiprows=9,parse_dates=[0])
+    df = df.rename(columns={'Value': col_name})
+    df.set_index('#Timestamp', inplace=True)
+    if filter_out:
+        # Filter nondaily dat
+        df= df[df['Interpolation Type']!=filter_out]
+    
+    if only_rf:
+        return df.iloc[:,0]
+    else:
+        return df
+        
+def read_custom_haizea_csv(filepath):
+    # Extract the new column name from the filename (before the first underscore)
+    new_col_name = os.path.basename(filepath).split("_")[1]
+
+    # Read the CSV
+    df = pd.read_csv(filepath)
+
+    # Drop the first column
+    # df.drop(df.columns[0], axis=1, inplace=True)      --this time the csv file returned only two columns
+
+    # Parse the second column as datetime and set it as the index
+    df[df.columns[0]] = pd.to_datetime(df[df.columns[0]])
+    df.set_index(df.columns[0], inplace=True)
+
+    # Rename the last column
+    df.columns = [new_col_name]
 
     return df
